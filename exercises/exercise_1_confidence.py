@@ -23,81 +23,219 @@ from common.schemas import (
     ReviewState,
 )
 
-
 console = Console()
 
 
 def node_fetch_pr(state: ReviewState) -> dict:
     console.print("[cyan]→ fetch_pr[/cyan]")
+
     with console.status("[dim]Fetching PR from GitHub...[/dim]"):
         pr = fetch_pr(state["pr_url"])
-    console.print(f"  [green]✓[/green] {len(pr.files_changed)} files, head {pr.head_sha[:7]}")
+
+    console.print(
+        f"  [green]✓[/green] "
+        f"{len(pr.files_changed)} files, "
+        f"head {pr.head_sha[:7]}"
+    )
+
     return {
-        "pr_title": pr.title, "pr_diff": pr.diff,
-        "pr_files": pr.files_changed, "pr_head_sha": pr.head_sha,
+        "pr_title": pr.title,
+        "pr_diff": pr.diff,
+        "pr_files": pr.files_changed,
+        "pr_head_sha": pr.head_sha,
     }
 
 
 def node_analyze(state: ReviewState) -> dict:
     console.print("[cyan]→ analyze[/cyan]")
-    # TODO: call the LLM with structured output PRAnalysis.
-    # Hint:  llm = get_llm().with_structured_output(PRAnalysis)
-    #        analysis = llm.invoke([...])
-    #        return {"analysis": analysis}
-    # When implemented, wrap the call in:
-    #        with console.status("[dim]LLM thinking...[/dim]"):
-    #            analysis = llm.invoke([...])
-    raise NotImplementedError("Implement node_analyze")
+
+    llm = get_llm().with_structured_output(PRAnalysis)
+
+    messages = [
+        (
+            "system",
+            """
+You are a senior software engineer performing pull request reviews.
+
+Analyze the PR carefully.
+
+You must:
+- summarize the PR
+- identify risks/issues
+- generate review comments
+- provide reasoning
+- assign a confidence score between 0 and 1
+
+Confidence guidelines:
+- 0.85+ = safe / trivial / mechanical change
+- 0.60-0.85 = moderate risk
+- below 0.60 = risky / security-sensitive / unclear
+            """,
+        ),
+        (
+            "human",
+            f"""
+PR Title:
+{state["pr_title"]}
+
+Changed Files:
+{", ".join(state["pr_files"])}
+
+Git Diff:
+{state["pr_diff"]}
+            """,
+        ),
+    ]
+
+    with console.status("[dim]LLM thinking...[/dim]"):
+        analysis = llm.invoke(messages)
+
+    console.print(
+        f"  [green]✓[/green] "
+        f"confidence = {analysis.confidence:.0%}"
+    )
+
+    console.print(
+        f"  [dim]summary:[/dim] "
+        f"{analysis.summary[:120]}"
+    )
+
+    return {
+        "analysis": analysis
+    }
 
 
 def node_route(state: ReviewState) -> dict:
     console.print("[cyan]→ route[/cyan]")
-    # TODO: read state["analysis"].confidence and return
-    #       {"decision": "auto_approve" | "human_approval" | "escalate"}
-    # Thresholds provided: AUTO_APPROVE_THRESHOLD (0.85) and ESCALATE_THRESHOLD (0.60).
-    raise NotImplementedError("Implement node_route")
+
+    confidence = state["analysis"].confidence
+
+    console.print(
+        f"  [dim]thresholds:[/dim] "
+        f"auto>={AUTO_APPROVE_THRESHOLD:.0%}, "
+        f"escalate<{ESCALATE_THRESHOLD:.0%}"
+    )
+
+    if confidence >= AUTO_APPROVE_THRESHOLD:
+        decision = "auto_approve"
+
+    elif confidence >= ESCALATE_THRESHOLD:
+        decision = "human_approval"
+
+    else:
+        decision = "escalate"
+
+    console.print(f"  [green]✓[/green] decision = {decision}")
+
+    return {
+        "decision": decision
+    }
 
 
 def node_auto_approve(state: ReviewState) -> dict:
-    console.print("[green]✓ AUTO APPROVE[/green] — high confidence, no human needed")
-    return {"final_action": "auto_approved"}
+    console.print(
+        "[green]✓ AUTO APPROVE[/green] "
+        "— high confidence, no human needed"
+    )
+
+    return {
+        "final_action": "auto_approved"
+    }
 
 
 def node_human_approval(state: ReviewState) -> dict:
-    console.print("[yellow]✓ HUMAN APPROVAL[/yellow] — placeholder, exercise 2 will pause here")
-    return {"final_action": "pending_human_approval"}
+    console.print(
+        "[yellow]✓ HUMAN APPROVAL[/yellow] "
+        "— placeholder, exercise 2 will pause here"
+    )
+
+    return {
+        "final_action": "pending_human_approval"
+    }
 
 
 def node_escalate(state: ReviewState) -> dict:
-    console.print("[red]✓ ESCALATE[/red] — placeholder, exercise 3 will ask the reviewer questions")
-    return {"final_action": "pending_escalation"}
+    console.print(
+        "[red]✓ ESCALATE[/red] "
+        "— placeholder, exercise 3 will ask the reviewer questions"
+    )
+
+    return {
+        "final_action": "pending_escalation"
+    }
+
+
+def route_decision(state: ReviewState) -> str:
+    return state["decision"]
 
 
 def build_graph():
     g = StateGraph(ReviewState)
-    # TODO: add_node for the 6 nodes above (fetch_pr, analyze, route, auto_approve, human_approval, escalate)
-    # TODO: add_edge from START → fetch_pr → analyze → route
-    # TODO: add_conditional_edges on "route" with mapping
-    #       {"auto_approve": "auto_approve", "human_approval": "human_approval", "escalate": "escalate"}
-    # TODO: add_edge from each terminal node → END
+
+    # Nodes
+    g.add_node("fetch_pr", node_fetch_pr)
+    g.add_node("analyze", node_analyze)
+    g.add_node("route", node_route)
+
+    g.add_node("auto_approve", node_auto_approve)
+    g.add_node("human_approval", node_human_approval)
+    g.add_node("escalate", node_escalate)
+
+    # Main flow
+    g.add_edge(START, "fetch_pr")
+    g.add_edge("fetch_pr", "analyze")
+    g.add_edge("analyze", "route")
+
+    # Conditional routing
+    g.add_conditional_edges(
+        "route",
+        route_decision,
+        {
+            "auto_approve": "auto_approve",
+            "human_approval": "human_approval",
+            "escalate": "escalate",
+        },
+    )
+
+    # Terminal nodes
+    g.add_edge("auto_approve", END)
+    g.add_edge("human_approval", END)
+    g.add_edge("escalate", END)
+
     return g.compile()
 
 
 def main() -> None:
     load_dotenv()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--pr", required=True)
+
     args = parser.parse_args()
 
     console.rule("[bold]Exercise 1 — confidence routing[/bold]")
+
     console.print(f"[dim]PR: {args.pr}[/dim]\n")
 
     app = build_graph()
-    final = app.invoke({"pr_url": args.pr})
+
+    final = app.invoke(
+        {
+            "pr_url": args.pr
+        }
+    )
 
     console.rule("Final")
-    console.print(f"confidence = {final['analysis'].confidence:.0%}")
-    console.print(f"action     = {final.get('final_action')}")
+
+    console.print(
+        f"confidence = "
+        f"{final['analysis'].confidence:.0%}"
+    )
+
+    console.print(
+        f"action     = "
+        f"{final.get('final_action')}"
+    )
 
 
 if __name__ == "__main__":

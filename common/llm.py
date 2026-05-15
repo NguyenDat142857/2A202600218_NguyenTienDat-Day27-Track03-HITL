@@ -1,17 +1,25 @@
-"""LLM factory. Returns an OpenAI-compatible chat model wired to OpenRouter."""
+from __future__ import annotations
 
 import os
-
 from langchain_openai import ChatOpenAI
 
 
-def get_llm(temperature: float = 0.2) -> ChatOpenAI:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+def get_llm():
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    model = os.getenv("LLM_MODEL", "openai/gpt-oss-120b:free")
+    base_url = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set — copy .env.example to .env")
+        raise RuntimeError("Missing OPENROUTER_API_KEY")
+
     return ChatOpenAI(
-        model=os.environ.get("LLM_MODEL", "openai/gpt-4o-mini"),
-        base_url=os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
+        model=model,
         api_key=api_key,
-        temperature=temperature,
+        base_url=base_url,
+        temperature=0,
+        max_tokens=3000,
+        default_headers={
+            "HTTP-Referer": "http://localhost",
+            "X-Title": "HITL PR Agent",
+        },
     )
