@@ -1,5 +1,6 @@
 # Day27 — Track 3: HITL PR Review Agent
 
+Full Ảnh kết quả: [Pic_Result](Pic_Result)
 A 2-hour lab that builds a human-in-the-loop pull-request review agent in **LangGraph**, end-to-end.
 
 > 1. Agent reads a PR, analyzes code changes, proposes review comments.
